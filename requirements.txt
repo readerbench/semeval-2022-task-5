@@ -1,0 +1,15 @@
+Pillow
+pandas
+torch
+torchvision
+transformers
+numpy
+matplotlib
+seaborn
+rich
+sklearn
+git+git://github.com/NVIDIA/apex.git
+sutime
+nltk
+scipy
+tensorboard

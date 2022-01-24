@@ -1,0 +1,37 @@
+Binary best:
+
+            "args": [
+                "--data_path=../data/TRAINING",
+                "--config=../models/uniter-base.json",
+                "--feature_path=../data/Features_152/own_features_FasterRCNN",
+                "--model_path=../checkpoints",
+                "--pretrained_model_file=../models/uniter-base.pt",
+                "--batch_size=12",
+                "--min_object_conf=0.7",
+                "--max_txt_len=128",
+                "--optimizer=adam",
+                "--dropout=0.3",
+                "--lr=1e-5",
+                "--use_nms",
+                "--nms_threshold=0.7",
+[I 2022-01-24 01:35:46,469] Trial 41 finished with value: 0.818266563194003 and parameters:
+ {'use_nms': True, 'nms_val': 0.5, 'min_object_conf': 0.5, 'max_txt_len': 128, 
+ 'optimizer': 'adam', 'lr': 0.0001, 'max_grad_norm': 5, 'gradient_accumulation': 9.0, 'warmup_steps': 100, 'weight_decay': 0.001, 'lr_decay_factor': 1, 'lr_decay_step': 5}. 
+
+Multiclass best:
+
+            "args": [
+                "--data_path=../data/TRAINING/",
+                "--config=../models/uniter-base.json",
+                "--feature_path=../data/Features_152/own_features_FasterRCNN",
+                "--model_path=../checkpoints",
+                "--pretrained_model_file=../models/uniter-base.pt",
+                "--batch_size=16",
+                "--min_object_conf=0.7",
+                "--max_txt_len=128",
+                "--nr_classes=5",
+                "--loss_func=ce",
+                "--optimizer=adam",
+                "--dropout=0.3",
+                "--patience=2",
+                "--lr=1e-5",
