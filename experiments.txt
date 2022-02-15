@@ -35,3 +35,67 @@ Multiclass best:
                 "--dropout=0.3",
                 "--patience=2",
                 "--lr=1e-5",
+Running training with the following parameters: 
+
+01/24/2022 09:28:36 | INFO |   			 task : train
+01/24/2022 09:28:36 | INFO |   			 data_path : /content/drive/MyDrive/Doctorat_AI/Semeval2022/data
+01/24/2022 09:28:36 | INFO |   			 nr_classes : 2
+01/24/2022 09:28:36 | INFO |   			 model_path : ./checkpoints
+01/24/2022 09:28:36 | INFO |   			 tensorboard_path : ./tensorboard
+01/24/2022 09:28:36 | INFO |   			 model_save_name : best_model
+01/24/2022 09:28:36 | INFO |   			 debug : False
+01/24/2022 09:28:36 | INFO |   			 with_cleanup : False
+01/24/2022 09:28:36 | INFO |   			 with_tensorboard : False
+01/24/2022 09:28:36 | INFO |   			 with_vgg19 : True
+01/24/2022 09:28:36 | INFO |   			 with_gcn : False
+01/24/2022 09:28:36 | INFO |   			 pretrained_model_file : /content/drive/MyDrive/Doctorat_AI/Semeval2022/model/uniter-base.pt
+01/24/2022 09:28:36 | INFO |   			 model_file : None
+01/24/2022 09:28:36 | INFO |   			 no_model_checkpoints : False
+01/24/2022 09:28:36 | INFO |   			 matrix_file : None
+01/24/2022 09:28:36 | INFO |   			 config : /content/drive/MyDrive/Doctorat_AI/Semeval2022/model/uniter-base.json
+01/24/2022 09:28:36 | INFO |   			 feature_path : features152
+01/24/2022 09:28:36 | INFO |   			 sentiment_feature_path : sentiment2
+01/24/2022 09:28:36 | INFO |   			 max_txt_len : 128
+01/24/2022 09:28:36 | INFO |   			 min_object_conf : 0.7
+01/24/2022 09:28:36 | INFO |   			 max_bb : 100
+01/24/2022 09:28:36 | INFO |   			 min_bb : 10
+01/24/2022 09:28:36 | INFO |   			 num_bb : 36
+01/24/2022 09:28:36 | INFO |   			 use_nms : False
+01/24/2022 09:28:36 | INFO |   			 nms_threshold : 0.0
+01/24/2022 09:28:36 | INFO |   			 dropout : 0.2
+01/24/2022 09:28:36 | INFO |   			 gcn_embedding_dim : 128
+01/24/2022 09:28:36 | INFO |   			 adj_npmi_threshold : 0.2
+01/24/2022 09:28:36 | INFO |   			 adj_tf_threshold : 0.0
+01/24/2022 09:28:36 | INFO |   			 adj_vocab_type : all
+01/24/2022 09:28:36 | INFO |   			 optimizer : adamw
+01/24/2022 09:28:36 | INFO |   			 optimize_for : f1
+01/24/2022 09:28:36 | INFO |   			 loss_func : bce_logits
+01/24/2022 09:28:36 | INFO |   			 pos_wt : 1
+01/24/2022 09:28:36 | INFO |   			 scheduler : warmup_cosine
+01/24/2022 09:28:36 | INFO |   			 batch_size : 32
+01/24/2022 09:28:36 | INFO |   			 gradient_accumulation : 10
+01/24/2022 09:28:36 | INFO |   			 max_grad_norm : 5
+01/24/2022 09:28:36 | INFO |   			 lr : 0.0001
+01/24/2022 09:28:36 | INFO |   			 warmup_steps : 120
+01/24/2022 09:28:36 | INFO |   			 weight_decay : 0.01
+01/24/2022 09:28:36 | INFO |   			 max_epoch : 20
+01/24/2022 09:28:36 | INFO |   			 lr_decay_step : 3.0
+01/24/2022 09:28:36 | INFO |   			 lr_decay_factor : 1.0
+01/24/2022 09:28:36 | INFO |   			 patience : 2.0
+01/24/2022 09:28:36 | INFO |   			 early_stop_thresh : 0.001
+01/24/2022 09:28:36 | INFO |   			 seed : 42
+01/24/2022 09:28:36 | INFO |   			 tokenizer : PreTrainedTokenizer(name_or_path='bert-base-cased', vocab_size=28996, model_max_len=512, is_fast=False, padding_side='right', special_tokens={'unk_token': '[UNK]', 'sep_token': '[SEP]', 'pad_token': '[PAD]', 'cls_token': '[CLS]', 'mask_token': '[MASK]'})
+01/24/2022 09:28:36 | INFO |   			 train_loader : <torch.utils.data.dataloader.DataLoader object at 0x7eff12f9e610>
+01/24/2022 09:28:36 | INFO |   			 validate_loader : <torch.utils.data.dataloader.DataLoader object at 0x7eff12f8d110>
+01/24/2022 09:28:36 | INFO |   			 test_loader : <torch.utils.data.dataloader.DataLoader object at 0x7eff1c684150>
+01/24/2022 09:28:36 | INFO |   
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  
+
+01/24/2022 09:48:37 | INFO |   Training terminated on epoch 7 because the Validation f1 did not improve for 2.0 epochs
+01/24/2022 09:48:37 | INFO |   ------------------------------
+01/24/2022 09:48:37 | INFO |   		Evaluating on test set
+01/24/2022 09:48:37 | INFO |   ------------------------------
+01/24/2022 09:49:09 | INFO |   	Loss=0.4761 , Acc =  0.8100 , Prec = 0.8191 , Recall = 0.8063 , F1 = 0.8100 
+01/24/2022 09:49:09 | INFO |   -----------====== Training ended ======-----------
+01/24/2022 09:49:09 | INFO |   Best Metrics on epoch 5:
+01/24/2022 09:49:09 | INFO |   0.8100212841716976 

@@ -29,7 +29,7 @@ def prepare_loaders(config):
 
 def semeval_data_loader(dataset:str='train', config=None, tokenizer=None):
     assert dataset in ['train', 'validate', 'test'], 'Allowed values for dataset: train, validate, test'
-    # to device!
+    
     if (Path(config['data_path']) / (dataset + ".csv")).exists():
         return SemevalDataset(
             Path(config['data_path']) / (dataset + ".csv"),
@@ -44,9 +44,12 @@ def semeval_data_loader(dataset:str='train', config=None, tokenizer=None):
             nr_classes=config['nr_classes'],
             text_cleanup=config['with_cleanup'],
             sentiment_path=config['sentiment_feature_path'],
-            use_gcn=config['with_gcn'],
+            use_gcn=(config['model_type'] in ['uniter-gnn', 'uniter-gnn2']),
             gcn_embedding_dim=config['gcn_embedding_dim'],
-        )
+            lowercase=config['lowercase'],
+            remove_non_ascii=config['remove_non_ascii'],
+            spellcheck=config['spellcheck'],
+      )
     else:
         return None
     
@@ -54,7 +57,8 @@ def semeval_data_loader(dataset:str='train', config=None, tokenizer=None):
 class SemevalDataset(Dataset):
     def __init__(self, csv_file, image_folder, features_folder, tokenizer, max_length, *, shuffle=True, nr_classes=2,
              obj_vocab=None, use_nms=False, nms_threshold=0.7, min_obj_confidence=0.0, ignore_objects=None, text_cleanup=False,
-             sentiment_path=None, use_gcn=False, gcn_embedding_dim=0 ):
+             sentiment_path=None, use_gcn=False, gcn_embedding_dim=0, lowercase=False, remove_non_ascii=True,
+             spellcheck=False ):
         self.csv_file = csv_file
         self.image_folder = Path(image_folder)
         self.features_folder = Path(features_folder)
@@ -70,18 +74,26 @@ class SemevalDataset(Dataset):
 
         self.df = pd.read_csv(self.csv_file, sep="\t")
 
-        if self.nr_classes==4:
-            # Classifying only positive records
-            self.df = self.df[self.df['misogynous']==1]
+        # if self.nr_classes==4:
+        #     # Classifying only positive records
+        #     self.df = self.df[self.df['misogynous']==1]
 
         if shuffle:
             self.df = self.df.sample(frac=1.0)
+
+        if spellcheck:
+            import jamspell
+            corrector = jamspell.TSpellCorrector()
+            corrector.LoadLangModel('en.bin')
+            self.df['Text Transcription'] = self.df['Text Transcription'].apply(corrector.FixFragment)
         
         self.text_cleanup = text_cleanup
         if self.text_cleanup:
             self.sutime = SUTime(mark_time_ranges=True, include_range=True)
         self.sentiment_path = sentiment_path
         self.gcn_embedding_dim = gcn_embedding_dim
+        self.lowercase = lowercase
+        self.remove_non_ascii = remove_non_ascii
 
 
     def __len__(self):
@@ -123,8 +135,13 @@ class SemevalDataset(Dataset):
         data_id = record.file_name.lower().replace('.jpg','')
 
         text = record['Text Transcription']
+        if self.lowercase:
+            text = text.lower()
+        if self.remove_non_ascii:
+            text = (text.encode("ascii", "ignore")).decode()
+
         if self.text_cleanup:
-            text = self.cleanup_text(text)
+            text = self.cleanup_text(text)        
 
         tokens = self.tokenizer.encode(text,  max_length=self.max_length, truncation=True, padding='do_not_pad',return_tensors='pt').squeeze()
 
@@ -293,8 +310,12 @@ def semeval_collate_fn(inputs):
     sent_features = None
 
     if 'gcn_tokens' in inputs[0]:
-        (file_ids, token_ids, img_feats, img_pos_feats, 
-            attn_masks, texts, labels, gcn_tokens) = list(zip(*[d.values() for d in inputs]))
+        if  'sent_features' in inputs[0]:
+            (file_ids, token_ids, img_feats, img_pos_feats, 
+                attn_masks, texts, labels, sent_features, gcn_tokens) = list(zip(*[d.values() for d in inputs]))
+        else:
+            (file_ids, token_ids, img_feats, img_pos_feats, 
+                attn_masks, texts, labels, gcn_tokens) = list(zip(*[d.values() for d in inputs]))
     elif 'sent_features' in inputs[0]:
         (file_ids, token_ids, img_feats, img_pos_feats, 
             attn_masks, texts, labels, sent_features) = list(zip(*[d.values() for d in inputs]))

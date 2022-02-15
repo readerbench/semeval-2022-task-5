@@ -1,3 +1,4 @@
+from pyexpat import model
 import time
 import random
 import pandas as pd
@@ -16,7 +17,8 @@ from utils.gcn import GCNConfig, get_torch_gcn
 from utils.logger import LOGGER, add_log_to_file, log_tensorboard
 from pathlib import Path
 from model.uniter import UniterForPretraining, UniterModel, UniterConfig
-from model.semeval import SemevalUniter, SemevalUniterVGG19Sentiment, SemevalUniterVGG19Sentiment2, VGCN_Bert
+from model.semeval import SemevalUniter, SemevalUniterVGG19Sentiment, SemevalUniterVGG19Sentiment2, VGCN_Bert, VGCN_Bert_and_VGG
+from utils.metrics import compute_scoreA, compute_scoreB
 from utils.uniter import IMG_DIM, IMG_LABEL_DIM
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
@@ -100,7 +102,7 @@ class Trainer():
 
         # Evaluate on dev set
         
-        val_labels, val_preds, val_loss = self.eval_model()
+        val_labels, val_preds, val_loss, _ = self.eval_model()
 
         # acc, prec, recall, f1 
         metrics =  (    
@@ -185,11 +187,16 @@ class Trainer():
                                                               img_label_dim=IMG_LABEL_DIM)
             uniter_model = base_model.uniter
 
-# gcn_adj_matrix=gcn_adj_list,
-# gcn_adj_dim=gcn_conf.vocab_size, gcn_adj_num=len(gcn_adj_list),
-# gcn_embedding_dim=args.gcn_embedding_dim,
-        if self.config['with_gcn']:
+        if self.config['model_type']=='uniter':
+            self.model = SemevalUniter(uniter_model=uniter_model,                                    
+                                    n_classes=self.config['nr_classes'])
+        
+        elif self.config['model_type']=='uniter-sentiment':
+            self.model = SemevalUniterVGG19Sentiment(uniter_model=uniter_model,
+                                    dropout=self.config['dropout'],
+                                    n_classes=self.config['nr_classes'])
 
+        elif self.config['model_type']=='uniter-gnn':
             datautils.dataloader.gcn_conf = GCNConfig(
                 vocab_size=base_model.config.vocab_size+OBJECT_VOCAB_SIZE,
                 npmi_threshold=self.config['adj_npmi_threshold'],
@@ -211,13 +218,31 @@ class Trainer():
                                     gcn_embedding_dim=self.config['gcn_embedding_dim'], 
                                     num_labels=self.config['nr_classes'])
 
-        elif self.config['with_vgg19']:
-            self.model = SemevalUniterVGG19Sentiment(uniter_model=uniter_model,
-                                    dropout=self.config['dropout'],
-                                    n_classes=self.config['nr_classes'])
+        elif self.config['model_type']=='uniter-gnn2':
+            datautils.dataloader.gcn_conf = GCNConfig(
+                vocab_size=base_model.config.vocab_size+OBJECT_VOCAB_SIZE,
+                npmi_threshold=self.config['adj_npmi_threshold'],
+                tf_threshold=self.config['adj_tf_threshold'],
+                vocab_adj=self.config['adj_vocab_type'],
+            )
+
+
+            gcn_vocab_adj_tf, gcn_vocab_adj, adj_config = pkl.load(open(self.config['matrix_file'], 'rb'))
+
+            gcn_adj_list = get_torch_gcn(gcn_vocab_adj_tf, gcn_vocab_adj, datautils.dataloader.gcn_conf) # Scipy sparse matrix to Torch
+
+            for i in range(len(gcn_adj_list)): gcn_adj_list[i]=gcn_adj_list[i].to(self.device) # Send to device
+
+            self.model = VGCN_Bert_and_VGG(uniter_model,
+                                    gcn_adj_matrix=gcn_adj_list, 
+                                    gcn_adj_dim=datautils.dataloader.gcn_conf.vocab_size, 
+                                    gcn_adj_num=len(gcn_adj_list),
+                                    gcn_embedding_dim=self.config['gcn_embedding_dim'], 
+                                    num_labels=self.config['nr_classes'])
+
         else:
-            self.model = SemevalUniter(uniter_model=uniter_model,                                    
-                                    n_classes=self.config['nr_classes'])
+            raise Exception('Model Type must be defined!')
+
 
         if self.config['model_file']:
             # previously saved model file 
@@ -232,7 +257,7 @@ class Trainer():
             self.init_optimizer()
             self.init_scheduler()
 
-        if self.config['loss_func'] == 'bce_logits':
+        if self.config['loss_func'] == 'bce_logits':            
             self.criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([self.config['pos_wt']]).to(self.device))
         elif self.config['loss_func'] == 'bce':
             self.criterion = nn.BCELoss()
@@ -244,17 +269,21 @@ class Trainer():
             if param.requires_grad and param.grad is not None:
                 param.grad = param.grad / steps
 
-    def logits_to_prediction(self, logits):
+    def logits_to_prediction(self, logits, margin=0.5):
         if self.config['loss_func'] == 'bce':
             probs = logits
         elif self.config['loss_func'] == 'ce':            
-            # probs = F.softmax(logits, dim=1)
+            probs = F.softmax(logits, dim=1)
             probs = logits
         elif self.config['loss_func'] == 'bce_logits':
             probs = torch.sigmoid(logits)
 
         if self.config['nr_classes']>2:
-            preds = (probs>0.5).type(torch.FloatTensor)
+            preds = (probs>margin).type(torch.FloatTensor)
+            if self.config['nr_classes']==5: # daca e pred[0]=1 si restul not 0 --> de luat cel mai probabil
+                indices = torch.nonzero(((preds[:,0]==1) & (preds[:,1:].max(dim=1).values==1)) | (preds.max(dim=1).values==0), as_tuple=True)
+                preds[indices] = torch.nn.functional.one_hot( probs[indices].max(dim=1).indices, 5).type(torch.FloatTensor)
+           
         else:
             preds = torch.argmax(probs, dim=1)
             preds = torch.eye(2).to(preds.device).index_select(dim=0, index=preds)
@@ -267,9 +296,14 @@ class Trainer():
 
         if self.config['loss_func'] == 'bce':
             logits = torch.sigmoid(logits)
-        logits = logits.squeeze(1).to(self.device) if self.config['loss_func'] == 'bce_logits' else logits.to(self.device)
+        if self.config['loss_func'] == 'ce':
+            logits = torch.softmax(logits)
 
-        loss = self.criterion(logits, batch_label.type(torch.FloatTensor).to(self.device) if self.config['loss_func']=='ce' else batch_label.float().to(self.device))
+        # logits = logits.squeeze(1).to(self.device) if self.config['loss_func'] == 'bce_logits' else logits.to(self.device)
+
+        # loss = self.criterion(logits, batch_label.type(torch.FloatTensor).to(self.device) if self.config['loss_func']=='ce' else batch_label.float().to(self.device))
+        
+        loss = self.criterion(logits.to(self.device), batch_label.type(torch.FloatTensor).to(self.device))
 
         if is_train :
             loss.backward()
@@ -329,7 +363,8 @@ class Trainer():
         LOGGER.info(f"Best Metrics on epoch {self.best_epoch_info['epoch']}:")
         LOGGER.info(self.best_epoch_info['metrics'])
 
-    def export_test_predictions(self, preds):
+
+    def export_test_predictions(self, preds, probs):
         output_file = Path(self.config['model_path']) / self.checkpoint_file
         output_file = output_file.parent / ("eval_"+output_file.name)
         output_file = output_file.with_suffix(".csv")
@@ -342,9 +377,14 @@ class Trainer():
             if self.config['nr_classes']==4:
                 df_raw = pd.concat([df_raw, pd.DataFrame(preds, columns=["pred_shaming",
                                         "pred_stereotype","pred_objectification","pred_violence"])], axis=1)
+                df_raw = pd.concat([df_raw, pd.DataFrame(probs, columns=["shaming_prob","stereotype_prob",
+                                                                        "objectification_prob","violence_prob"])], axis=1)
             else:
                 df_raw = pd.concat([df_raw, pd.DataFrame(preds, columns=["pred_non_misogynous","pred_shaming",
                                         "pred_stereotype","pred_objectification","pred_violence"])], axis=1)
+                df_raw = pd.concat([df_raw, pd.DataFrame(probs, columns=["non_misogynous_prob","shaming_prob","stereotype_prob",
+                                                                        "objectification_prob","violence_prob"])], axis=1)
+
             df_raw['pred_misogynous'] = df_raw[["pred_shaming","pred_stereotype","pred_objectification","pred_violence"]].max(axis=1)
             df_raw['pred_misogynous'] = df_raw['pred_misogynous'].astype(int)
             df_raw['pred_shaming'] = df_raw['pred_shaming'].astype(int)
@@ -352,33 +392,29 @@ class Trainer():
             df_raw['pred_objectification'] = df_raw['pred_objectification'].astype(int)
             df_raw['pred_violence'] = df_raw['pred_violence'].astype(int)
 
-            if self.config['nr_classes']==4:
-                df_raw_negatives = pd.read_csv(Path(self.config['data_path']) / ("test.csv"), sep="\t")
-                df_raw_negatives = df_raw_negatives[df_raw_negatives.misogynous==0]
-                df_raw_negatives['pred_shaming'] = 0
-                df_raw_negatives['pred_stereotype'] = 0
-                df_raw_negatives['pred_objectification'] = 0
-                df_raw_negatives['pred_violence'] = 0
-                df_raw = pd.concat([df_raw, df_raw_negatives])
         else:
             # binary (Task A)
             df_raw['pred_misogynous'] = np.argmax(preds, axis=1)
             df_raw['pred_misogynous'] = df_raw['pred_misogynous'].astype(int)
+            df_raw = pd.concat([df_raw, pd.DataFrame(probs, columns=["misogynous_prob_0","misogynous_prob_1"])], axis=1)
 
         df_raw.to_csv(output_file, sep="\t", index=None)
 
     def compute_metrics(self, labels, preds):
+        r_labels = range(len(labels))
         if self.config['nr_classes']<=2:
             labels = np.argmax(labels, axis=1) if len(labels[-1])>1 else labels
             preds = np.argmax(preds, axis=1) if len(preds[-1])>1 else preds
 
             prec=precision_score(labels, preds, zero_division=0)
             recall=recall_score(labels, preds, zero_division=0)
-            f1=f1_score(labels, preds, average='weighted', zero_division=0)
+            # f1=f1_score(labels, preds, average='weighted', zero_division=0)
+            f1 = compute_scoreA(dict(zip(r_labels,labels)), dict(zip(r_labels,preds)))
         else:
             prec=precision_score(labels, preds, average='weighted', zero_division=0)
             recall=recall_score(labels, preds, average='weighted', zero_division=0)
-            f1=f1_score(labels, preds, average='weighted', zero_division=0) # Weighted pt Multiclass!!
+            # f1=f1_score(labels, preds, average='weighted', zero_division=0) # Weighted pt Multiclass!!
+            f1 = compute_scoreB(dict(zip(r_labels,labels)), dict(zip(r_labels,preds)))
 
         acc=accuracy_score(labels, preds)
 
@@ -402,10 +438,10 @@ class Trainer():
                 self.model.to(self.device)
             
             
-            labels, preds, loss  = self.eval_model()
+            labels, preds, loss, probs  = self.eval_model(dataset='test_loader')
             acc, prec, recall, f1 = self.compute_metrics(labels, preds)
             LOGGER.info(f"\tLoss={loss:.4f} , Acc =  {acc:.4f} , Prec = {prec:.4f} , Recall = {recall:.4f} , F1 = {f1:.4f} ")
-            self.export_test_predictions(preds)
+            self.export_test_predictions(preds, probs)
 
             ##  if test data has label ---> compute metrics 
             ##
@@ -439,6 +475,48 @@ class Trainer():
         )
 
         return metric
+    def call_model(self, batch):
+        if self.config['model_type']=='uniter':
+            preds = self.model(img_feat=batch['image_features'],
+                                img_pos_feat=batch['image_pos_features'],
+                                input_ids=batch['input_ids'],
+                                position_ids=batch['position_ids'],
+                                attention_mask=batch['attn_masks'],
+                                gather_index=batch['gather_index'],
+                                output_all_encoded_layers=False)
+        elif self.config['model_type']=='uniter-sentiment':
+            preds = self.model(img_feat=batch['image_features'],
+                                img_pos_feat=batch['image_pos_features'],
+                                input_ids=batch['input_ids'],
+                                position_ids=batch['position_ids'],
+                                attention_mask=batch['attn_masks'],
+                                gather_index=batch['gather_index'],
+                                output_all_encoded_layers=False,
+                                vgg_pool=batch['sent_features'])
+        elif self.config['model_type']=='uniter-gnn':
+            preds = self.model(img_feat=batch['image_features'],
+                                img_pos_feat=batch['image_pos_features'],
+                                input_ids=batch['input_ids'],
+                                position_ids=batch['position_ids'],
+                                attention_mask=batch['attn_masks'],
+                                gather_index=batch['gather_index'],
+                                output_all_encoded_layers=False,
+                                gcn_swop_eye=batch['gcn'])
+        elif self.config['model_type']=='uniter-gnn2':
+            preds = self.model(img_feat=batch['image_features'],
+                                img_pos_feat=batch['image_pos_features'],
+                                input_ids=batch['input_ids'],
+                                position_ids=batch['position_ids'],
+                                attention_mask=batch['attn_masks'],
+                                gather_index=batch['gather_index'],
+                                output_all_encoded_layers=False,
+                                gcn_swop_eye=batch['gcn'],
+                                vgg_pool=batch['sent_features'])
+
+        else:
+            raise Exception('Model Type must be defined!')
+
+        return preds
 
     def do_train(self):
 
@@ -463,56 +541,19 @@ class Trainer():
             self.progress.update(epoch_prog, advance=1)
             
             step_prog = self.progress.add_task("[yellow]Batch nr ...", total=len(self.config['train_loader']))
-            for self.iters, self.batch in enumerate(self.config['train_loader']):
+            for self.iters, batch in enumerate(self.config['train_loader']):
                 
                 if self.config['debug'] and self.iters>10:
                     break
 
-                # if self.config['with_tensorboard'] and self.epoch==self.start_epoch and self.iters==0:
-                #     batch = dict(img_feat=self.batch['image_features'],
-                #                         img_pos_feat=self.batch['image_pos_features'],
-                #                         input_ids=self.batch['input_ids'],
-                #                         position_ids=self.batch['position_ids'],
-                #                         attention_mask=self.batch['attn_masks'],
-                #                         gather_index=self.batch['gather_index'],
-                #                         )
-                #     # self.writer.add_graph(self.model, batch)
-
                 self.model.train()
                 self.progress.update(step_prog, advance=1)
 
-                batch_to_device(self.batch, self.device)
-                iter_time = time.time()
-                if self.config['with_gcn']:
-                    self.preds = self.model(img_feat=self.batch['image_features'],
-                                        img_pos_feat=self.batch['image_pos_features'],
-                                        input_ids=self.batch['input_ids'],
-                                        position_ids=self.batch['position_ids'],
-                                        attention_mask=self.batch['attn_masks'],
-                                        gather_index=self.batch['gather_index'],
-                                        output_all_encoded_layers=False,
-                                        gcn_swop_eye=self.batch['gcn'])
-                elif self.config['with_vgg19']:
-                    self.preds = self.model(img_feat=self.batch['image_features'],
-                                        img_pos_feat=self.batch['image_pos_features'],
-                                        input_ids=self.batch['input_ids'],
-                                        position_ids=self.batch['position_ids'],
-                                        attention_mask=self.batch['attn_masks'],
-                                        gather_index=self.batch['gather_index'],
-                                        output_all_encoded_layers=False,
-                                        vgg_pool=self.batch['sent_features'])
-                else:
-                    self.preds = self.model(img_feat=self.batch['image_features'],
-                                            img_pos_feat=self.batch['image_pos_features'],
-                                            input_ids=self.batch['input_ids'],
-                                            position_ids=self.batch['position_ids'],
-                                            attention_mask=self.batch['attn_masks'],
-                                            gather_index=self.batch['gather_index'],
-                                            output_all_encoded_layers=False)
+                batch_to_device(batch, self.device)
+                
+                preds = self.call_model(batch)
 
-                self.calculate_loss(self.preds, self.batch['labels'], is_train=True)
-
-
+                self.calculate_loss(preds, batch['labels'], is_train=True)
 
                 if self.iters % 10 == 0:
                     metric = self.metric_reporting()
@@ -536,9 +577,10 @@ class Trainer():
         return self.best_epoch_info, metric
 
     @torch.no_grad()
-    def eval_model(self, dataset='validate_loader'):
+    def eval_model(self, dataset='validate_loader', prob_margin=0.5):
         label_list = []
         pred_list = []
+        prob_list = []
         loss_list = []
 
         epoch = self.epoch if hasattr(self, 'epoch') else '=None='
@@ -551,44 +593,19 @@ class Trainer():
             if self.config['debug'] and step>10:
                 break
 
-            if self.config['with_gcn']:
-                logits = self.model(img_feat=self.batch['image_features'],
-                                    img_pos_feat=self.batch['image_pos_features'],
-                                    input_ids=self.batch['input_ids'],
-                                    position_ids=self.batch['position_ids'],
-                                    attention_mask=self.batch['attn_masks'],
-                                    gather_index=self.batch['gather_index'],
-                                    output_all_encoded_layers=False,
-                                    gcn_swop_eye=self.batch['gcn'])
+            logits = self.call_model(batch)
 
-            elif self.config['with_vgg19']:
-                logits = self.model(img_feat=batch['image_features'],
-                                    img_pos_feat=batch['image_pos_features'],
-                                    input_ids=batch['input_ids'],
-                                    position_ids=batch['position_ids'],
-                                    attention_mask=batch['attn_masks'],
-                                    gather_index=batch['gather_index'],
-                                    output_all_encoded_layers=False,
-                                    vgg_pool=batch['sent_features'])
-            else:
-                logits = self.model(img_feat=batch['image_features'],
-                                        img_pos_feat=batch['image_pos_features'],
-                                        input_ids=batch['input_ids'],
-                                        position_ids=batch['position_ids'],
-                                        attention_mask=batch['attn_masks'],
-                                        gather_index=batch['gather_index'],
-                                        output_all_encoded_layers=False)
-            
-            pred, probs = self.logits_to_prediction(logits)
+            pred, probs = self.logits_to_prediction(logits,  self.config['prob_margin'])
             loss = self.calculate_loss(logits, batch['labels'], is_train=False)
 
             loss_list.append(loss)
             label_list.extend(batch['labels'].cpu().detach().tolist())
             pred_list.extend(pred.cpu().detach().tolist())
+            prob_list.extend(probs.cpu().detach().tolist())
 
         self.progress.remove_task(eval_prog)
         eval_loss = sum(loss_list) / len(loss_list)
-        return label_list, pred_list, eval_loss 
+        return label_list, pred_list, eval_loss, prob_list
 
     @torch.no_grad()
     def predict_model(self, dataset='test_loader'):
@@ -602,34 +619,9 @@ class Trainer():
             batch_to_device(batch, self.device)
             self.progress.update(predict_prog, advance=1)
 
-            if self.config['with_gcn']:
-                logits = self.model(img_feat=self.batch['image_features'],
-                                    img_pos_feat=self.batch['image_pos_features'],
-                                    input_ids=self.batch['input_ids'],
-                                    position_ids=self.batch['position_ids'],
-                                    attention_mask=self.batch['attn_masks'],
-                                    gather_index=self.batch['gather_index'],
-                                    output_all_encoded_layers=False,
-                                    gcn_swop_eye=self.batch['gcn'])
-            elif self.config['with_vgg19']:
-                logits = self.model(img_feat=batch['image_features'],
-                                    img_pos_feat=batch['image_pos_features'],
-                                    input_ids=batch['input_ids'],
-                                    position_ids=batch['position_ids'],
-                                    attention_mask=batch['attn_masks'],
-                                    gather_index=batch['gather_index'],
-                                    output_all_encoded_layers=False,
-                                    vgg_pool=batch['sent_features'])
-            else:
-                logits = self.model(img_feat=batch['image_features'],
-                                    img_pos_feat=batch['image_pos_features'],
-                                    input_ids=batch['input_ids'],
-                                    position_ids=batch['position_ids'],
-                                    attention_mask=batch['attn_masks'],
-                                    gather_index=batch['gather_index'],
-                                    output_all_encoded_layers=False)
+            logits = self.call_model(batch)
             
-            pred, probs = self.logits_to_prediction(logits)
+            pred, probs = self.logits_to_prediction(logits, self.config['prob_margin'])
             prob_list.extend(probs.cpu().detach().tolist())
             pred_list.extend(pred.cpu().detach().tolist())
             file_ids.extend(batch['file_ids'])
@@ -651,11 +643,14 @@ class Trainer():
         # Named parameters
         parser.add_argument('--task', choices=['train', 'eval','predict'], default='train', 
                             help='Task to perform')
+        
+        parser.add_argument("--model_type", type=str, choices=['uniter', 'uniter-sentiment', 'uniter-gnn', 'uniter-gnn2'], default='uniter',
+                            help='Moodel type')
         # Required Paths
         parser.add_argument('--data_path', type=str, default='./dataset', required=True,
                             help='path to dataset folder that contains the processed data files')
-        parser.add_argument('--nr_classes', type=int, choices=[2,5], default=2,
-                            help='Number of classes for the classifier (2,5)')
+        parser.add_argument('--nr_classes', type=int, choices=[2,4,5], default=2,
+                            help='Number of classes for the classifier (2,4,5)')
 
         parser.add_argument('--model_path', type=str, default='./model_checkpoints',
                             help='Directory for saving trained model checkpoints')
@@ -667,12 +662,17 @@ class Trainer():
                             help='This option is intended for tests on local machines, and more output.')
         parser.add_argument('--with_cleanup', action="store_true",
                             help='Enable text Cleanup')
+        parser.add_argument('--lowercase', action="store_true",
+                            help='Convert all in lowercase')
+        parser.add_argument('--remove_non_ascii', action="store_true",
+                            help='Remove all non ascii chars')
+        parser.add_argument('--spellcheck', action="store_true",
+                            help='apply spellcheck')
         parser.add_argument('--with_tensorboard', action="store_true",
                             help='Enable Tensorboard logging')
 
-        parser.add_argument('--with_vgg19', action="store_true",
-                            help='Load VGG augmented model')
-        parser.add_argument('--with_gcn', action="store_true", help='Load VGCN  model')
+        parser.add_argument('--prob_margin', type=float, default=0.5,
+                            help='Probability cutoff for classes')
 
         # Load pretrained model
         parser.add_argument('--pretrained_model_file', type=str, help='Filename for the pretrained model')
@@ -723,7 +723,7 @@ class Trainer():
         ## Not sure whether we should have this here. For a multi-task setup, we need our own loss functions
         parser.add_argument('--loss_func', type=str, default='bce_logits',
                             help='Loss function to use for optimization: bce / bce_logits / ce')
-        parser.add_argument('--pos_wt', type=float, default=1,
+        parser.add_argument('--pos_wt', type=float, default=1, nargs='+', 
                               help='Loss reweighting for the positive class to deal with class imbalance')
         parser.add_argument('--scheduler', type=str, default='warmup_cosine',
                             help='The type of lr scheduler to use anneal learning rate: step/multi_step/warmup/warmp_cosine')
@@ -772,10 +772,10 @@ class Trainer():
         if config.get('with_tensorboard'):
             Path(config['tensorboard_path']).mkdir(parents=True, exist_ok=True)
 
-        if config.get('with_vgg19'):
+        if config.get('model_type')=='uniter-sentiment':
             assert config.get('sentiment_feature_path') and Path(config['sentiment_feature_path']).exists(), "[!] ERROR: Sentiment Feature path does not exist"
 
-        if config.get('with_gcn'):
+        if config.get('model_type') in ['uniter-gnn', 'uniter-gnn2']:
             assert config.get('matrix_file') and Path(config['matrix_file']).exists(), "[!] ERROR: Matrix File does not exist"
 
 

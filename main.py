@@ -43,7 +43,12 @@ def main(args):
             LOGGER.info("\n\n" + "="*100 + "\n\t\t\t\t\t Evaluating Network\n" + "="*100)
 
             trainer.print_config()
-            labels, preds, loss = trainer.eval_model('test_loader')    
+            labels, preds, loss, probs = trainer.eval_model('test_loader')
+            trainer.config['model_path'] = Path(config['model_file']).parent
+            trainer.checkpoint_file = Path(config['model_file']).name
+            
+            trainer.export_test_predictions(preds, probs)
+
 
             labels = np.argmax(labels, axis=1) if len(labels[-1])>1 else labels
             preds = np.argmax(preds, axis=1) if len(preds[-1])>1 else preds
@@ -108,33 +113,19 @@ def main(args):
                     df_raw = pd.concat([df_raw, pd.DataFrame(preds, columns=["shaming","stereotype","objectification","violence"])], axis=1)
                     df_raw = pd.concat([df_raw, pd.DataFrame(probs, columns=["shaming_prob","stereotype_prob",
                                                                             "objectification_prob","violence_prob"])], axis=1)
-                    # since we check only positives, we take the highest prob for non detected
-                    def get_best_prob(rec):
-                        best = rec[["shaming_prob","stereotype_prob","objectification_prob","violence_prob"]].idxmax()    
-                        rec[best.replace("_prob","")] = 1
-                        return rec
-                    df_raw[df_raw['misogynous']==0] =  df_raw[df_raw['misogynous']==0].apply(get_best_prob)
                 else:
                     df_raw = pd.concat([df_raw, pd.DataFrame(preds, columns=["non_misogynous","shaming","stereotype","objectification","violence"])], axis=1)
                     df_raw = pd.concat([df_raw, pd.DataFrame(probs, columns=["non_misogynous_prob","shaming_prob","stereotype_prob",
                                                                             "objectification_prob","violence_prob"])], axis=1)
                 df_raw['misogynous'] = df_raw[["shaming","stereotype","objectification","violence"]].max(axis=1)
 
-                if config['nr_classes']==4:
-                    df_raw_negatives = pd.read_csv(Path(config['data_path']) / ("test.csv"), sep="\t")
-                    df_raw_negatives = df_raw_negatives[df_raw_negatives.misogynous==0]
-                    df_raw_negatives['pred_shaming'] = 0
-                    df_raw_negatives['pred_stereotype'] = 0
-                    df_raw_negatives['pred_objectification'] = 0
-                    df_raw_negatives['pred_violence'] = 0
-                    df_raw = pd.concat([df_raw, df_raw_negatives])
+                df_raw['misogynous'] = df_raw['misogynous'].astype(int)
+                df_raw['shaming'] = df_raw['shaming'].astype(int)
+                df_raw['stereotype'] = df_raw['stereotype'].astype(int)
+                df_raw['objectification'] = df_raw['objectification'].astype(int)
+                df_raw['violence'] = df_raw['violence'].astype(int)
 
                 df_submit = df_raw[["filename", "misogynous","shaming","stereotype","objectification","violence"]]
-                df_submit['misogynous'] = df_submit['misogynous'].astype(int)
-                df_submit['shaming'] = df_submit['shaming'].astype(int)
-                df_submit['stereotype'] = df_submit['stereotype'].astype(int)
-                df_submit['objectification'] = df_submit['objectification'].astype(int)
-                df_submit['violence'] = df_submit['violence'].astype(int)
 
                 LOGGER.info("\nMisogynous:")
                 LOGGER.info(df_submit.misogynous.value_counts())

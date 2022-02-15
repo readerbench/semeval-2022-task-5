@@ -29,7 +29,7 @@ def corpus_freq(corpus, objects, tokenizer, min_word_freq, text_window_size, tex
     if use_multiprocessing:
         with Parallel(n_jobs=num_workers, backend="threading") as paralell:
             corpus = paralell(
-                delayed(clean_corpus)(y) for x in corpus for y in x.split("\n") if len(y)>2# split in  Paragraphs
+                delayed(clean_corpus)(x) for x in corpus 
             )
 
         with Parallel(n_jobs=num_workers, backend="threading") as paralell:

@@ -36,7 +36,7 @@ class GCNConfig(object):
 def clean_text(text, remove_stop_words=False, remove_numeric=False):
     # delete [ \t\n\r\f\v]
     space_pattern = r'[\s+\xa0]'
-    text = re.sub(space_pattern, ' ', text)
+    text = re.sub(space_pattern, ' ', str(text))
     if remove_stop_words:
         text = stopwords_pattern.sub('', text)
     if remove_numeric:
