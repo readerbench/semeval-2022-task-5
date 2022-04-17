@@ -3,3 +3,7 @@
 __pycache__
 checkpoints
 tensorboard
+data
+images
+experiments.txt
+notebook

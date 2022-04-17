@@ -119,6 +119,7 @@ class SemevalUniterVGG19Sentiment2(nn.Module):
         
 
 
+
 class VocabGraphConvolution(nn.Module):
     """Vocabulary GCN module.
 
@@ -301,9 +302,41 @@ class VGCN_Bert(nn.Module):
 
         
         gcn_vocab_out = self.vocab_gcn(vocab_input)
+        input_lens = attention_mask.sum(-1)
         gcn_vocab_out = gcn_vocab_out.transpose(1, 2)
 
-        embeddings = embedding_output
+        gcn_words_embeddings = nn.ConstantPad3d((0,0,0,gcn_vocab_out.size(1),0,0), 0)(embedding_output)
+
+        # gcn_words_embeddings=joint_embeddings.clone()
+        # for i in range(self.gcn_embedding_dim):
+        #     tmp_pos=(attention_mask.sum(-1)-2-self.gcn_embedding_dim+1+i)+torch.arange(0,input_ids.shape[0]).to(self.device)*input_ids.shape[1]
+        #     gcn_words_embeddings.flatten(start_dim=0, end_dim=1)[tmp_pos,:]=gcn_vocab_out[:,:,i]
+
+        # De incercat si un LayerNorm pe GCN
+
+        for i, seq_len in enumerate(input_lens.tolist()):
+            gcn_words_embeddings[i, seq_len:seq_len + self.gcn_embedding_dim,:] = gcn_vocab_out[i, :, :]
+
+        # Add the GCN embeddings to the mask 
+        attention_mask = (torch.arange(gcn_words_embeddings.size(1))[None, :].to(input_lens.device)
+                    < (input_lens+self.gcn_embedding_dim)[:, None])
+        # Poate trebuie modificat sa adunam positional si la GCN...
+
+        # seq_length = input_ids.size(1)
+        # position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        # position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        # if token_type_ids is None:
+        #     token_type_ids = torch.zeros_like(input_ids)
+
+        # position_embeddings = self.position_embeddings(position_ids)
+        # token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        # if self.gcn_embedding_dim>0:
+        #     embeddings = gcn_words_embeddings + position_embeddings + token_type_embeddings
+        # else:
+        #     embeddings = words_embeddings + position_embeddings + token_type_embeddings
+
+        embeddings = gcn_words_embeddings
         embeddings = self.LayerNorm(embeddings)
         embedding_output = self.dropout(embeddings)
         
