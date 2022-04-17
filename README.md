@@ -1,3 +1,9 @@
+# UPB at Semeval 2022 Task 5
+
+UPB contribution to Semeval 2022 Task 5: MAMI - Multimedia Automatic Misogyny Identification.
+
+
+
 ## Requirements
 * Visual features extractor https://github.com/MILVLG/bottom-up-attention.pytorch
 * Visual sentiment analysis https://github.com/fabiocarrara/visual-sentiment-analysis.git
